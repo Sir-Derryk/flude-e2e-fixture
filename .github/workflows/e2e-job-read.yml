@@ -1,0 +1,27 @@
+name: E2E read one job by id (manual)
+
+# Manual only. Asks the live control plane for the job with the given id using this repository's key and prints the HTTP
+# status and the job status. Used to check that a job of this account is readable (K28 fallback read).
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Id of a job that belongs to this account"
+        required: true
+
+jobs:
+  read-job:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BASE: https://flude-worker-controlplane-555636434059.us-central1.run.app
+      JOB_ID: ${{ inputs.job_id }}
+    steps:
+      - name: Read the job
+        run: |
+          set -u
+          status=$(curl -s -o job.json -w "%{http_code}" -H "Authorization: Bearer ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}" "$BASE/v1/jobs/$JOB_ID")
+          echo "HTTP $status"
+          python3 -c "import json; d=json.load(open('job.json')); print('job status:', d.get('status'), '| keys:', sorted(d))"
+          test "$status" = "200"
