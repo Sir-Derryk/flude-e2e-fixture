@@ -1,0 +1,33 @@
+name: E2E hostile .flude.yml (manual)
+
+# Manual only. Run it on a branch whose .flude.yml carries a line break or another control character in a value
+# (CR-01): the live service must refuse the job with status "failed" and a message about the settings file, and
+# must never reach the engine. The hourly e2e on main is a different workflow and does not read this file.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-hostile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        continue-on-error: true
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: The job must have failed on the settings file
+        run: |
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" = "failed"
