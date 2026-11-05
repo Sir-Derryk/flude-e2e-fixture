@@ -1,0 +1,37 @@
+name: E2E foreign job is not readable (manual)
+
+# Manual only (K6). Takes the id of a job that belongs to ANOTHER account (planted for this check) and asks the live
+# control plane for it with this repository's key. A stranger must get exactly the answer for a job that does not exist:
+# status 404 and the same body, and no result link. A request without a key must get 401.
+on:
+  workflow_dispatch:
+    inputs:
+      foreign_job_id:
+        description: "Id of a job owned by another account"
+        required: true
+
+jobs:
+  e2e-foreign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BASE: https://flude-worker-controlplane-555636434059.us-central1.run.app
+      FOREIGN_ID: ${{ inputs.foreign_job_id }}
+    steps:
+      - name: A stranger asks for the foreign job and for a job that never existed
+        run: |
+          set -u
+          MISSING_ID="k6-missing-$(date +%s)"
+          foreign_status=$(curl -s -o foreign.json -w "%{http_code}" -H "Authorization: Bearer ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}" "$BASE/v1/jobs/$FOREIGN_ID")
+          missing_status=$(curl -s -o missing.json -w "%{http_code}" -H "Authorization: Bearer ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}" "$BASE/v1/jobs/$MISSING_ID")
+          anon_status=$(curl -s -o anon.json -w "%{http_code}" "$BASE/v1/jobs/$FOREIGN_ID")
+          echo "foreign job:   http=$foreign_status body=$(cat foreign.json)"
+          echo "missing job:   http=$missing_status body=$(cat missing.json)"
+          echo "no key at all: http=$anon_status"
+          test "$foreign_status" = "404"
+          test "$missing_status" = "404"
+          cmp foreign.json missing.json
+          ! grep -q "result_url\|example.invalid\|signed" foreign.json
+          test "$anon_status" = "401"
+          echo "OK: the foreign job is indistinguishable from a missing one"
