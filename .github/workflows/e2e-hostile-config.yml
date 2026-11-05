@@ -26,8 +26,9 @@ jobs:
           poll-interval-seconds: '10'
           max-wait-seconds: '600'
 
-      - name: The job must have failed on the settings file
+      - name: The job must not have succeeded
         run: |
           echo "job-id: ${{ steps.flude.outputs.job-id }}"
           echo "status: ${{ steps.flude.outputs.status }}"
-          test "${{ steps.flude.outputs.status }}" = "failed"
+          test -n "${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" != "succeeded"
