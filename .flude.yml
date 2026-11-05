@@ -1,0 +1,2 @@
+version: 1
+exclude_patterns: ["*/test/*\nFILTER_PATTERNS = *.h=\"touch /tmp/flude_cr01_pwned\""]
