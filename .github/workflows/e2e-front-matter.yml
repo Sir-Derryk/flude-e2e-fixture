@@ -1,0 +1,75 @@
+name: E2E front matter with quotes in a template parameter list (manual)
+
+# Manual only. Run it on the branch `front-matter`, whose src/tokenizer.h has classes with a quote and a backslash in
+# the default value of a template parameter. The Doxygen backend puts that parameter list into the page title
+# (`name_suffix`), which used to break the YAML front matter (K13 / CR-12). The account behind the API token must be
+# allowed to use the Doxygen backend (entitlements); otherwise the control plane answers 403 parser_backend_not_allowed.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-front-matter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane (Doxygen backend)
+        id: flude
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          language: 'cpp'
+          parser-backend: 'doxygen'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '900'
+
+      - name: Checkout flude-action to get zip-extract.js
+        uses: actions/checkout@v4
+        with:
+          repository: 'Flude-team/flude-action'
+          path: 'flude-action-repo'
+
+      - name: Every front matter value is a valid scalar
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          echo "backend: ${{ steps.flude.outputs.parser-backend }}"
+          test "${{ steps.flude.outputs.status }}" = "succeeded"
+          cat << 'JS_EOF' > verify.mjs
+          import { readFileSync } from 'node:fs';
+          import { listZipEntries, extractZipEntry } from './flude-action-repo/src/zip-extract.js';
+
+          const buffer = readFileSync(process.env.RESULT_PATH);
+          const pages = listZipEntries(buffer).filter((e) => e.fileName.endsWith('.md'));
+          let checked = 0;
+          let titleWithTemplateList = null;
+          const problems = [];
+          for (const entry of pages) {
+            const text = extractZipEntry(buffer, entry.fileName).toString('utf-8').replace(/\r\n/g, '\n');
+            if (!text.startsWith('---\n')) continue;
+            const end = text.indexOf('\n---\n', 4);
+            const block = text.slice(4, end);
+            for (const line of block.split('\n')) {
+              const m = /^(title|description|parent): (.*)$/.exec(line);
+              if (!m) { if (/^[a-z_]+: /.test(line) === false && line.trim() !== '') problems.push(`${entry.fileName}: a line that is not "key: value": ${line}`); continue; }
+              checked++;
+              try {
+                const value = JSON.parse(m[2]);
+                if (m[1] === 'title' && /Quote|Sep/.test(value)) titleWithTemplateList = value;
+              } catch (e) {
+                problems.push(`${entry.fileName}: ${m[1]} is not a valid double-quoted scalar: ${m[2]}`);
+              }
+            }
+          }
+          console.log(`pages: ${pages.length}, front matter values checked: ${checked}`);
+          console.log(`a title with the template parameter list: ${titleWithTemplateList}`);
+          if (titleWithTemplateList === null) { console.error('no title carries the template parameter list: the check proves nothing'); process.exit(2); }
+          if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+          console.log('OK: every title, description and parent is a valid scalar.');
+          JS_EOF
+          RESULT_PATH="${{ steps.flude.outputs.result-path }}" node verify.mjs
