@@ -1,0 +1,57 @@
+name: E2E a file the parser fails on is reported (manual)
+
+# Manual only. Run it on the branch `lost-file`: src/deep.h nests namespaces so deeply that the parser raises RecursionError
+# on it, src/ok.h is an ordinary header. The live service must finish the job (not fail it), keep documenting ok.h, and
+# name deep.h in the notices of the result archive (K12 / CR-09). The hourly e2e on main does not read this file.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-lost-file:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: Checkout flude-action to get zip-extract.js
+        uses: actions/checkout@v4
+        with:
+          repository: 'Flude-team/flude-action'
+          path: 'flude-action-repo'
+
+      - name: The lost file is named in the notices and the rest is documented
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" = "succeeded"
+          cat << 'JS_EOF' > verify.mjs
+          import { readFileSync } from 'node:fs';
+          import { listZipEntries, extractZipEntry } from './flude-action-repo/src/zip-extract.js';
+
+          const buffer = readFileSync(process.env.RESULT_PATH);
+          const entries = listZipEntries(buffer);
+          const warn = entries.find((e) => e.fileName.endsWith('warnings.txt'));
+          if (!warn) { console.error('no warnings.txt in the archive'); process.exit(1); }
+          const notes = extractZipEntry(buffer, warn.fileName).toString('utf-8');
+          console.log('--- warnings.txt (first 1200 chars) ---');
+          console.log(notes.slice(0, 1200));
+          if (!/deep\.h: the parser failed on this file \(RecursionError\)/.test(notes)) { console.error('deep.h is not named in the notices'); process.exit(1); }
+          const pages = entries.filter((e) => e.fileName.endsWith('.md'));
+          const documented = pages.some((e) => extractZipEntry(buffer, e.fileName).toString('utf-8').includes('OrdinaryWidget'));
+          if (!documented) { console.error('OrdinaryWidget (ok.h) is missing from the pages'); process.exit(1); }
+          console.log('OK: deep.h is reported as lost, ok.h is documented, the job succeeded.');
+          JS_EOF
+          RESULT_PATH="${{ steps.flude.outputs.result-path }}" node verify.mjs
