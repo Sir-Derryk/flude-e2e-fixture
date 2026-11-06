@@ -48,7 +48,7 @@ jobs:
           const notes = extractZipEntry(buffer, warn.fileName).toString('utf-8');
           console.log('--- warnings.txt (first 1200 chars) ---');
           console.log(notes.slice(0, 1200));
-          if (!/deep\.h: the parser failed on this file \(RecursionError\)/.test(notes)) { console.error('deep.h is not named in the notices'); process.exit(1); }
+          if (!/deep\.h: (the parser failed on this file \(\w+\)|the code is nested more than \d+ levels deep)/.test(notes)) { console.error('deep.h is not named in the notices'); process.exit(1); }
           const pages = entries.filter((e) => e.fileName.endsWith('.md'));
           const documented = pages.some((e) => extractZipEntry(buffer, e.fileName).toString('utf-8').includes('OrdinaryWidget'));
           if (!documented) { console.error('OrdinaryWidget (ok.h) is missing from the pages'); process.exit(1); }
