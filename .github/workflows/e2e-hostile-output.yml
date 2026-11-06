@@ -1,0 +1,67 @@
+name: E2E hostile comments in the output (manual)
+
+# Manual only. Run it on the branch `hostile-output`, whose src/hostile.h carries comments built to become executable
+# content in the generated Markdown (K11 / CR-08): raw tags, javascript: and data: links, reference definitions,
+# a backtick breakout. The live service must finish the job, and no generated page may contain a raw tag or an unsafe
+# link outside code. The hourly e2e on main is a different workflow and does not read this file.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-hostile-output:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: Checkout flude-action to get zip-extract.js
+        uses: actions/checkout@v4
+        with:
+          repository: 'Flude-team/flude-action'
+          path: 'flude-action-repo'
+
+      - name: No page carries executable content
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" = "succeeded"
+          test -f "${{ steps.flude.outputs.result-path }}"
+          cat << 'JS_EOF' > verify.mjs
+          import { readFileSync } from 'node:fs';
+          import { listZipEntries, extractZipEntry } from './flude-action-repo/src/zip-extract.js';
+
+          const buffer = readFileSync(process.env.RESULT_PATH);
+          const pages = listZipEntries(buffer).filter((e) => e.fileName.endsWith('.md'));
+          let sawHostileHeader = false;
+          const problems = [];
+          for (const entry of pages) {
+            const text = extractZipEntry(buffer, entry.fileName).toString('utf-8');
+            if (text.includes('Hostile') || text.includes('hostile')) sawHostileHeader = true;
+            // drop fenced blocks and inline code spans: what is left is what a renderer would treat as prose
+            const prose = text
+              .replace(/^(`{3,}|~{3,})[\s\S]*?^\1[ \t]*$/gm, '')
+              .replace(/(`+)[\s\S]*?\1/g, '')
+              .replace(/<br\s*\/?>/gi, ''); // the only tag the renderer writes itself
+            if (/<[a-zA-Z\/!]/.test(prose)) problems.push(`${entry.fileName}: a raw tag outside code`);
+            if (/\]\(\s*(javascript|vbscript|data|file):/i.test(prose)) problems.push(`${entry.fileName}: an unsafe link`);
+            if (/^\s{0,3}\[[^\]]+\]:\s*<?(javascript|vbscript|data|file):/im.test(prose)) problems.push(`${entry.fileName}: an unsafe reference`);
+          }
+          console.log(`pages checked: ${pages.length}`);
+          if (!sawHostileHeader) { console.error('the hostile header is not in the output: the check proves nothing'); process.exit(2); }
+          if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+          console.log('OK: no raw tag and no unsafe link outside code in any page.');
+          JS_EOF
+          RESULT_PATH="${{ steps.flude.outputs.result-path }}" node verify.mjs
