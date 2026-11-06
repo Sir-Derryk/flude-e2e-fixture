@@ -1,0 +1,55 @@
+name: E2E a refusal shows its sentence and help link (manual)
+
+# Manual only (K15). Asks the live control-plane for a format it refuses ("html"). The refusal must come back as a
+# sentence for a human plus a link to the section of the errors page named like the code, and the action must print
+# exactly that, not a raw JSON body.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-refusal:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Ask for a refused format
+        id: flude
+        continue-on-error: true
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          format: 'html'
+
+      - name: The refusal came back with its sentence and link
+        run: |
+          set -euo pipefail
+          test "${{ steps.flude.outcome }}" = "failure"
+          test -z "${{ steps.flude.outputs.job-id }}"
+          echo "refusal was reported and no job was created"
+
+      - name: The sentence and the link are what the control-plane says
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o body.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${FLUDE_TOKEN}" -H 'Content-Type: application/json' \
+            -d '{"repository_url":"https://github.com/Sir-Derryk/flude-e2e-fixture.git","format":"html","config":{"language":"cpp"}}' \
+            'https://flude-worker-controlplane-555636434059.us-central1.run.app/v1/jobs')
+          echo "http: ${code}"
+          export HTTP_CODE="${code}"
+          node -e '
+            const b = JSON.parse(require("fs").readFileSync("body.json", "utf8"));
+            console.log("error:", b.error);
+            console.log("message:", b.message);
+            console.log("help_url:", b.help_url);
+            if (process.env.HTTP_CODE !== "400") process.exit(1);
+            if (b.error !== "invalid_format") process.exit(2);
+            if (!b.message || /test/i.test(b.message)) process.exit(3);
+            if (b.help_url !== "https://user.flude.guide/docs/saas-errors#invalid_format") process.exit(4);
+            console.log("OK: code, sentence and help link are as agreed");
+          '
+        env:
+          FLUDE_TOKEN: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
