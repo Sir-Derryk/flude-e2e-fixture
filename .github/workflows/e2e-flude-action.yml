@@ -20,7 +20,7 @@ jobs:
         uses: Flude-team/flude-action@main
         with:
           api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
-          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          api-base-url: 'https://control-plane.flude.guide'
           language: 'cpp'
           poll-interval-seconds: '10'
           max-wait-seconds: '600'

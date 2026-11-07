@@ -21,7 +21,7 @@ jobs:
         uses: Flude-team/flude-action@main
         with:
           api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
-          api-base-url: 'https://flude-worker-controlplane-555636434059.us-central1.run.app'
+          api-base-url: 'https://control-plane.flude.guide'
           format: 'html'
 
       - name: The refusal came back with its sentence and link
@@ -37,7 +37,7 @@ jobs:
           code=$(curl -s -o body.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer ${FLUDE_TOKEN}" -H 'Content-Type: application/json' \
             -d '{"repository_url":"https://github.com/Sir-Derryk/flude-e2e-fixture.git","format":"html","config":{"language":"cpp"}}' \
-            'https://flude-worker-controlplane-555636434059.us-central1.run.app/v1/jobs')
+            'https://control-plane.flude.guide/v1/jobs')
           echo "http: ${code}"
           export HTTP_CODE="${code}"
           node -e '
