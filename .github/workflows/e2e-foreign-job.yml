@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     env:
-      BASE: https://flude-worker-controlplane-555636434059.us-central1.run.app
+      BASE: https://control-plane.flude.guide
       FOREIGN_ID: ${{ inputs.foreign_job_id }}
     steps:
       - name: A stranger asks for the foreign job and for a job that never existed

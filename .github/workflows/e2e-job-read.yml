@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     env:
-      BASE: https://flude-worker-controlplane-555636434059.us-central1.run.app
+      BASE: https://control-plane.flude.guide
       JOB_ID: ${{ inputs.job_id }}
     steps:
       - name: Read the job
