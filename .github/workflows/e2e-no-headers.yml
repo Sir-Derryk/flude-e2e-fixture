@@ -1,0 +1,52 @@
+name: E2E a repository with no matching file fails with no_matching_files (manual)
+
+# Manual only (P14). Run it on the branch `no-headers`: it holds README.md and src/main.cpp and no .h/.hpp/.hh/.hxx file,
+# so the default C++ selection is empty. The job must end as failed with the sentence of the catalog and the link to the
+# section named like the code, and it must not deliver an empty documentation. The hourly e2e on main does not read this
+# file.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-no-headers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        continue-on-error: true
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://control-plane.flude.guide'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: The job failed and the sentence and link are what the worker writes
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outcome }}" = "failure"
+          test "${{ steps.flude.outputs.status }}" = "failed"
+          code=$(curl -s -o job.json -w '%{http_code}' -H "Authorization: Bearer ${FLUDE_TOKEN}" \
+            "https://control-plane.flude.guide/v1/jobs/${{ steps.flude.outputs.job-id }}")
+          echo "http: ${code}"
+          export HTTP_CODE="${code}"
+          node -e '
+            const j = JSON.parse(require("fs").readFileSync("job.json", "utf8"));
+            console.log("status:", j.status);
+            console.log("error:", j.error);
+            if (process.env.HTTP_CODE !== "200") process.exit(1);
+            if (j.status !== "failed") process.exit(2);
+            if (!String(j.error).includes("No file in the repository matches the selection")) process.exit(3);
+            if (!String(j.error).includes("https://user.flude.guide/docs/saas-errors#no_matching_files")) process.exit(4);
+            console.log("OK: failed with the no_matching_files sentence and its help link");
+          '
+        env:
+          FLUDE_TOKEN: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}

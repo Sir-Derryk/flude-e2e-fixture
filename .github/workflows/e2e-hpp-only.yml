@@ -1,0 +1,53 @@
+name: E2E a repository with only .hpp headers is documented (manual)
+
+# Manual only (P14). Run it on the branch `hpp-only`: its only header is src/widget.hpp and there is no .flude.yml, so the
+# job runs with the default C++ patterns. The default used to be only **/*.h: the job then succeeded with an empty page.
+# Now .hpp is selected, the job must succeed and the pages must name the class Widget. The hourly e2e on main does not
+# read this file.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-hpp-only:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://control-plane.flude.guide'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: Checkout flude-action to get zip-extract.js
+        uses: actions/checkout@v4
+        with:
+          repository: 'Flude-team/flude-action'
+          path: 'flude-action-repo'
+
+      - name: The .hpp header is documented
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" = "succeeded"
+          cat << 'JS_EOF' > verify.mjs
+          import { readFileSync } from 'node:fs';
+          import { listZipEntries, extractZipEntry } from './flude-action-repo/src/zip-extract.js';
+
+          const buffer = readFileSync(process.env.RESULT_PATH);
+          const entries = listZipEntries(buffer);
+          const pages = entries.filter((e) => e.fileName.endsWith('.md'));
+          console.log('pages:', pages.map((e) => e.fileName).join(', '));
+          const documented = pages.some((e) => extractZipEntry(buffer, e.fileName).toString('utf-8').includes('Widget'));
+          if (!documented) { console.error('Widget (src/widget.hpp) is missing from the pages'); process.exit(1); }
+          console.log('OK: the .hpp header was selected by default and documented.');
+          JS_EOF
+          RESULT_PATH="${{ steps.flude.outputs.result-path }}" node verify.mjs
