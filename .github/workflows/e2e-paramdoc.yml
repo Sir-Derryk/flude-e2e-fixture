@@ -1,0 +1,67 @@
+name: E2E warn_no_paramdoc controls the param/return findings in report.sarif (manual)
+
+# Manual only (SET-09). Run it on the branch `paramdoc-on` with expect=present (no key in .flude.yml: the default is true, the
+# findings missing-param-doc and missing-return-doc must be in report.sarif) and on `paramdoc-off` with expect=absent
+# (.flude.yml has warn_no_paramdoc: false: neither finding may be in report.sarif). The hourly e2e on main does not read this file.
+on:
+  workflow_dispatch:
+    inputs:
+      expect:
+        description: 'present or absent'
+        required: true
+
+jobs:
+  e2e-paramdoc:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout fixture
+        uses: actions/checkout@v4
+
+      - name: Run flude-action against the live control-plane
+        id: flude
+        uses: Flude-team/flude-action@main
+        with:
+          api-token: ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}
+          api-base-url: 'https://control-plane.flude.guide'
+          language: 'cpp'
+          poll-interval-seconds: '10'
+          max-wait-seconds: '600'
+
+      - name: Checkout flude-action to get zip-extract.js
+        uses: actions/checkout@v4
+        with:
+          repository: 'Flude-team/flude-action'
+          path: 'flude-action-repo'
+
+      - name: The two findings are present or absent as expected
+        env:
+          EXPECT: ${{ github.event.inputs.expect }}
+        run: |
+          set -euo pipefail
+          echo "job-id: ${{ steps.flude.outputs.job-id }}"
+          echo "status: ${{ steps.flude.outputs.status }}"
+          test "${{ steps.flude.outputs.status }}" = "succeeded"
+          cat << 'JS_EOF' > verify.mjs
+          import { readFileSync } from 'node:fs';
+          import { listZipEntries, extractZipEntry } from './flude-action-repo/src/zip-extract.js';
+
+          const buffer = readFileSync(process.env.RESULT_PATH);
+          const entries = listZipEntries(buffer);
+          console.log('entries:', entries.map((e) => e.fileName).filter((n) => !n.endsWith('.md')).join(', '));
+          const sarif = entries.find((e) => e.fileName === 'report.sarif');
+          if (!sarif) { console.error('report.sarif is not in the result'); process.exit(1); }
+          const text = extractZipEntry(buffer, 'report.sarif').toString('utf-8');
+          const rules = [...new Set([...text.matchAll(/"ruleId"\s*:\s*"([^"]+)"/g)].map((m) => m[1]))].sort();
+          console.log('rules in report.sarif:', rules.join(', '));
+          const hasParam = rules.includes('missing-param-doc');
+          const hasReturn = rules.includes('missing-return-doc');
+          console.log('missing-param-doc:', hasParam, 'missing-return-doc:', hasReturn);
+          const expect = process.env.EXPECT;
+          if (expect === 'present' && !(hasParam && hasReturn)) { console.error('expected both findings'); process.exit(2); }
+          if (expect === 'absent' && (hasParam || hasReturn)) { console.error('expected neither finding'); process.exit(3); }
+          if (expect !== 'present' && expect !== 'absent') { console.error('expect must be present or absent'); process.exit(4); }
+          console.log('OK: ' + expect);
+          JS_EOF
+          RESULT_PATH="${{ steps.flude.outputs.result-path }}" node verify.mjs
