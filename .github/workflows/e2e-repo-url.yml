@@ -1,6 +1,7 @@
 name: E2E hostile repository_url is refused (manual)
 
-# Manual only (K4, CR-13). Sends four hostile `repository_url` values to the live control plane with this repository's key
+# Manual only (K4, CR-13). The body carries config.language=cpp, because the configuration check runs before the URL
+# check (a body without it is refused for the language, not the URL). Sends four hostile `repository_url` values to the live control plane with this repository's key
 # and requires every one to be refused with HTTP 400 and the "Invalid repository path" error, and NO job id in the body
 # (nothing is queued, nothing is cloned). The values try to make the gate check one repository while another is cloned:
 # a ".." segment in the middle, a trailing "..", a percent-escaped "..", and an extra path ("/tree/main"). A request
@@ -23,7 +24,7 @@ jobs:
           fail=0
           check() {
             name="$1"; url="$2"
-            body=$(jq -n --arg u "$url" '{repository_url: $u}')
+            body=$(jq -n --arg u "$url" '{repository_url: $u, config: {language: "cpp"}}')
             status=$(curl -s -o out.json -w "%{http_code}" -X POST \
               -H "Authorization: Bearer ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}" -H "Content-Type: application/json" \
               -d "$body" "$BASE/v1/jobs")
@@ -39,7 +40,7 @@ jobs:
           check "percent-escaped dot-dot " "https://github.com/Sir-Derryk/%2e%2e/torvalds/linux"
           check "extra path (tree/main)  " "https://github.com/Sir-Derryk/flude-e2e-fixture/tree/main"
           anon=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" \
-            -d '{"repository_url":"https://github.com/Sir-Derryk/../torvalds/linux"}' "$BASE/v1/jobs")
+            -d '{"repository_url":"https://github.com/Sir-Derryk/../torvalds/linux","config":{"language":"cpp"}}' "$BASE/v1/jobs")
           echo "no key at all: http=$anon"
           if [ "$anon" != "401" ]; then echo "FAIL no key: expected 401"; fail=1; fi
           test "$fail" = "0"
