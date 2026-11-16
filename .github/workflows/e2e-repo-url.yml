@@ -1,0 +1,46 @@
+name: E2E hostile repository_url is refused (manual)
+
+# Manual only (K4, CR-13). Sends four hostile `repository_url` values to the live control plane with this repository's key
+# and requires every one to be refused with HTTP 400 and the "Invalid repository path" error, and NO job id in the body
+# (nothing is queued, nothing is cloned). The values try to make the gate check one repository while another is cloned:
+# a ".." segment in the middle, a trailing "..", a percent-escaped "..", and an extra path ("/tree/main"). A request
+# without a key must get 401. Each refused request still counts against the account's daily request counter (the rate
+# limit runs before the URL check), so this uses four of the account's requests for the day.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-repo-url:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BASE: https://control-plane.flude.guide
+    steps:
+      - name: Hostile repository_url values are refused before any job exists
+        run: |
+          set -u
+          fail=0
+          check() {
+            name="$1"; url="$2"
+            body=$(jq -n --arg u "$url" '{repository_url: $u}')
+            status=$(curl -s -o out.json -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer ${{ secrets.FLUDE_E2E_LIVE_API_TOKEN }}" -H "Content-Type: application/json" \
+              -d "$body" "$BASE/v1/jobs")
+            echo "$name: http=$status body=$(cat out.json)"
+            if [ "$status" != "400" ]; then echo "FAIL $name: expected 400"; fail=1; fi
+            if ! jq -e '(.error // "") | startswith("Invalid repository path")' out.json >/dev/null; then
+              echo "FAIL $name: expected the Invalid repository path error"; fail=1
+            fi
+            if jq -e 'has("job_id")' out.json >/dev/null; then echo "FAIL $name: a job id was returned"; fail=1; fi
+          }
+          check "dot-dot in the middle   " "https://github.com/Sir-Derryk/../torvalds/linux"
+          check "trailing dot-dot        " "https://github.com/Sir-Derryk/flude-e2e-fixture/.."
+          check "percent-escaped dot-dot " "https://github.com/Sir-Derryk/%2e%2e/torvalds/linux"
+          check "extra path (tree/main)  " "https://github.com/Sir-Derryk/flude-e2e-fixture/tree/main"
+          anon=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" \
+            -d '{"repository_url":"https://github.com/Sir-Derryk/../torvalds/linux"}' "$BASE/v1/jobs")
+          echo "no key at all: http=$anon"
+          if [ "$anon" != "401" ]; then echo "FAIL no key: expected 401"; fail=1; fi
+          test "$fail" = "0"
+          echo "OK: every hostile repository_url is refused before a job exists"
